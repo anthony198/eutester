@@ -664,14 +664,21 @@ class EC2ops(Eutester):
         reservation = image.run(key_name=keypair,security_groups=[group],instance_type=type, placement=zone, min_count=min, max_count=max, user_data=user_data, addressing_type=addressing_type)
         if ((len(reservation.instances) < min) or (len(reservation.instances) > max)):
             self.fail("Reservation:"+str(reservation.id)+" returned "+str(len(reservation.instances))+" instances, not within min("+str(min)+") and max("+str(max)+" ")
-            
-        self.wait_for_reservation(reservation)
+        
+        try:
+            self.wait_for_reservation(reservation)
+        except Exception, e:
+            self.critical("An instance did not enter proper state in " + str(reservation) )
+            self.critical("Terminatng instances in " + str(reservation))
+            self.terminate_instances(reservation)
+            raise Exception("Instances in " + str(reservation) + " did not enter proper state")
+        
         for instance in reservation.instances:
             if instance.state != "running":
                 self.critical("Instance " + instance.id + " now in " + instance.state  + " state")
             else:
                 self.debug( "Instance " + instance.id + " now in " + instance.state  + " state")
-        #
+        #    
         # check to see if public and private DNS names and IP addresses are the same
         #
             if (instance.ip_address is instance.private_ip_address) and (instance.public_dns_name is instance.private_dns_name) and ( private_addressing is False ):
@@ -681,6 +688,10 @@ class EC2ops(Eutester):
                 self.debug(str(instance) + " got Public IP: " + str(instance.ip_address)  + " Private IP: " + str(instance.private_ip_address) + " Public DNS Name: " + str(instance.public_dns_name) + " Private DNS Name: " + str(instance.private_dns_name))
                 self.test_resources["reservations"].append(reservation)
             self.wait_for_valid_ip(instance)
+            if is_reachable:
+                self.ping(instance.public_dns_name, 60)
+                
+            
         #if we can establish an SSH session convert the instances to the test class euinstance for access to instance specific test methods
         if(is_reachable) and ((keypair is not None) or (user is not None and password is not None)):
             return self.convert_reservation_to_euinstance(reservation, username=username, password=password, keyname=keypair)
@@ -693,6 +704,7 @@ class EC2ops(Eutester):
         while elapsed <= timeout:
             if zeros.search(instance.public_dns_name):
                 self.sleep(1)
+                instance.update()
                 elapsed = elapsed + 1
             else:
                 return True
